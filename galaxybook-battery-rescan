@@ -1,0 +1,82 @@
+#!/bin/bash
+# galaxybook-battery-rescan
+#
+# On Samsung Galaxy Book4 laptops, booting without the charger makes the
+# firmware report the battery (BAT1) and charger (ADP1) as "not present"
+# during early boot, so Linux never sets them up. Seconds later the firmware
+# reports them as present, but never tells Linux to look again.
+#
+# This script makes Linux look again: it loads a tiny SSDT with no real
+# content through acpi_configfs. Loading any ACPI table makes the kernel
+# re-scan its devices (acpi_scan_table_notify -> acpi_bus_scan), and that
+# re-scan picks up the battery and charger.
+#
+# It does nothing if the battery is already there.
+
+set -euo pipefail
+
+TABLE_DIR=/sys/kernel/config/acpi/table/galaxybook-battery-rescan
+WAIT_SECONDS=${WAIT_SECONDS:-30}
+
+log() { echo "galaxybook-battery-rescan: $*"; }
+
+battery_registered() {
+  local d
+  for d in /sys/class/power_supply/*; do
+    [[ -r $d/type && $(<"$d/type") == Battery ]] && return 0
+  done
+  return 1
+}
+
+# ACPI battery devices (PNP0C0A) whose _STA says "present" (bit 0).
+battery_present_in_acpi() {
+  local s
+  for s in /sys/bus/acpi/devices/PNP0C0A:*/status; do
+    [[ -r $s ]] && (( $(<"$s") & 1 )) && return 0
+  done
+  return 1
+}
+
+if battery_registered; then
+  log "battery already detected, nothing to do"
+  exit 0
+fi
+
+if [[ $EUID -ne 0 ]]; then
+  log "battery missing; run as root to fix"
+  exit 1
+fi
+
+# The firmware may need a moment after boot before it reports the battery.
+for (( i = 0; i < WAIT_SECONDS; i++ )); do
+  battery_present_in_acpi && break
+  sleep 1
+done
+if ! battery_present_in_acpi; then
+  log "firmware still reports no battery after ${WAIT_SECONDS}s, giving up"
+  exit 1
+fi
+
+modprobe acpi_configfs
+[[ -d /sys/kernel/config/acpi ]] || mount -t configfs none /sys/kernel/config
+
+# A table can only be loaded once per boot; unload a previous copy first.
+[[ -d $TABLE_DIR ]] && rmdir "$TABLE_DIR" 2>/dev/null || true
+mkdir "$TABLE_DIR"
+
+# The SSDT (43 bytes). Its only content is an unused value, \BRSC = 1.
+# Source: make-ssdt.py in this repo.
+printf '\x53\x53\x44\x54\x2b\x00\x00\x00\x02\x5b\x52\x45\x53\x43\x41\x4e'\
+'\x42\x41\x54\x52\x53\x43\x41\x4e\x01\x00\x00\x00\x49\x4e\x54\x4c'\
+'\x12\x12\x25\x20\x08\x5c\x42\x52\x53\x43\x01' > "$TABLE_DIR/aml"
+
+for (( i = 0; i < 10; i++ )); do
+  if battery_registered; then
+    log "battery detected after re-scan"
+    exit 0
+  fi
+  sleep 1
+done
+
+log "table loaded but the battery still isn't detected"
+exit 1

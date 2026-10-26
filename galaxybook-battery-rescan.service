@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-detect the battery on Samsung Galaxy Book laptops booted without the charger
+After=systemd-modules-load.service local-fs.target
+ConditionPathExists=/sys/bus/acpi/devices/PNP0C0A:00
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/galaxybook-battery-rescan
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
