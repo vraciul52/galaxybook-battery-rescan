@@ -2,9 +2,10 @@
 # galaxybook-battery-rescan
 #
 # On Samsung Galaxy Book4 laptops, booting without the charger makes the
-# firmware report the battery (BAT1) and charger (ADP1) as "not present"
-# during early boot, so Linux never sets them up. Seconds later the firmware
-# reports them as present, but never tells Linux to look again.
+# firmware hide the battery (BAT1) and charger (ADP1) during early boot, so
+# Linux never sets them up. Seconds later the firmware un-hides them and sends
+# a Bus Check / Device Check notification, which Linux ignores for these
+# devices.
 #
 # This script makes Linux look again: it loads a tiny SSDT with no real
 # content through acpi_configfs. Loading any ACPI table makes the kernel

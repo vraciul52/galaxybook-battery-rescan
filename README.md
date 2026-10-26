@@ -13,9 +13,16 @@ Tested on a **Galaxy Book4 Ultra 960XGL** (BIOS P09ALX), Arch Linux (Omarchy), k
 
 ## Why it happens
 
-At power-on without the charger, the firmware's `_STA` method for `\_SB.PC00.LPCB.H_EC.BAT1` (and `\_SB.ADP1`) reports "not present". The values come from the embedded controller (EC), which isn't ready yet. Linux scans its ACPI devices once at boot, skips them, and never looks again.
+The firmware hides the battery and charger on purpose, then asks the OS to look again. Windows does; Linux ignores the request.
 
-A few seconds later, both devices report present (`/sys/bus/acpi/devices/PNP0C0A:00/status` = `31`), but the firmware never sends the `Notify` that would make Linux re-check them.
+From the DSDT (BIOS P09ALX):
+
+1. When the OS connects to the embedded controller (`H_EC._REG`), the firmware checks three things: the charger is unplugged, an EC battery value (`B1RR >> 8`) is at least `0x1E`, and an EC flag `LINX` (EC offset `0x75`) is not `1`. If all three hold, it fakes AC power (`PWRS = 1`) and sets `WDC0 = 0x81`.
+2. While `WDC0 == 0x81` and the real AC state differs from the faked one, `_STA` of `BAT1` and `ADP1` returns `0` (not present). So the boot-time ACPI scan skips them.
+3. Later, method `H_EC.MBFD` clears the flag, restores the real power state and sends `Notify(\_SB, 0)` (Bus Check), `Notify(ADP1, 1)` and `Notify(BAT1, 1)` (Device Check).
+4. Linux receives those notifications (confirmed with `dyndbg`, about 10 s into boot) but doesn't act on them. `acpi_device_hotplug()` only re-scans for devices with a hotplug scan handler (`flags.hotplug_notify`), which the battery, AC adapter and `\_SB` don't have. So the battery stays missing.
+
+Nothing in the firmware sets `LINX`; it looks like an unused "this is Linux" switch.
 
 ## How the fix works
 
